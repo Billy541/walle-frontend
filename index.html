@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <!-- 生产环境移除 vConsole，调试时手动添加 -->
+  <!-- <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script> -->
+  <script src="recorder-core.js"></script>
+  <script src="recorder-engine-wav.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>瓦力赛车口语搭子 🏎️</title>
+  <style>
+    /* ============================================
+       全局重置与基础样式
+       ============================================ */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+      background: #0d0d0d;
+      color: #fff;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ============================================
+       启动遮罩层（解决浏览器自动播放限制）
+       ============================================ */
+    .overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, #1a1a2e 0%, #0d0d0d 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      transition: opacity 0.5s;
+    }
+
+    .overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .overlay-title {
+      font-size: 36px;
+      font-weight: 900;
+      color: #ffcc00;
+      text-shadow: 0 0 20px rgba(255, 204, 0, 0.5);
+      margin-bottom: 12px;
+      letter-spacing: 2px;
+    }
+
+    .overlay-subtitle {
+      font-size: 20px;
+      color: #ccc;
+      margin-bottom: 40px;
+    }
+
+    .start-btn {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      border: 10px solid #ffcc00;
+      background: #e10600;
+      color: #fff;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 0 40px rgba(225, 6, 0, 0.5), inset 0 0 20px rgba(0,0,0,0.3);
+      transition: transform 0.15s, box-shadow 0.15s;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    .start-btn:active {
+      transform: scale(0.95);
+      box-shadow: 0 0 20px rgba(225, 6, 0, 0.3);
+    }
+
+    .overlay-hint {
+      margin-top: 30px;
+      font-size: 14px;
+      color: #666;
+    }
+
+    /* 格子旗装饰条 */
+    .checkered-flag {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 12px;
+      background: repeating-linear-gradient(
+        90deg,
+        #fff 0px, #fff 12px,
+        #000 12px, #000 24px
+      );
+      opacity: 0.3;
+    }
+
+    /* ============================================
+       主应用界面
+       ============================================ */
+    .app {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      position: relative;
+    }
+
+    .app.active {
+      display: flex;
+    }
+
+    /* 顶部标题栏 */
+    .header {
+      padding: 16px;
+      text-align: center;
+      background: linear-gradient(180deg, rgba(26,26,46,0.9) 0%, transparent 100%);
+      position: relative;
+    }
+
+    .header-title {
+      font-size: 24px;
+      font-weight: 800;
+      color: #ffcc00;
+      letter-spacing: 2px;
+    }
+
+    .header-sub {
+      font-size: 14px;
+      color: #888;
+      margin-top: 4px;
+    }
+
+    /* 对话气泡区域 */
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      scroll-behavior: smooth;
+    }
+
+    /* 隐藏滚动条但保留滚动功能 */
+    .chat-area::-webkit-scrollbar {
+      width: 0;
+    }
+
+    .bubble {
+      max-width: 80%;
+      padding: 14px 18px;
+      font-size: 18px;
+      line-height: 1.6;
+      word-break: break-word;
+      animation: popIn 0.3s ease-out;
+    }
+
+    @keyframes popIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .bubble-user {
+      align-self: flex-end;
+      background: #e10600;
+      color: #fff;
+      border-radius: 20px 20px 4px 20px;
+      box-shadow: 0 4px 15px rgba(225, 6, 0, 0.3);
+    }
+
+    .bubble-assistant {
+      align-self: flex-start;
+      background: #ffcc00;
+      color: #1a1a1a;
+      border-radius: 20px 20px 20px 4px;
+      box-shadow: 0 4px 15px rgba(255, 204, 0, 0.3);
+    }
+
+    .bubble-system {
+      align-self: center;
+      background: rgba(255,255,255,0.08);
+      color: #888;
+      font-size: 14px;
+      border-radius: 12px;
+      padding: 8px 16px;
+    }
+
+    .bubble-label {
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 4px;
+      opacity: 0.7;
+    }
+
+    /* 底部控制区 */
+    .control-area {
+      padding: 20px 16px 30px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      background: linear-gradient(0deg, rgba(13,13,13,1) 0%, transparent 100%);
+    }
+
+    /* 巨大的方向盘按钮 */
+    .talk-btn {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      border: 8px solid #ffcc00;
+      background: #e10600;
+      color: #fff;
+      font-size: 22px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 10px 40px rgba(225, 6, 0, 0.4), inset 0 0 15px rgba(0,0,0,0.2);
+      transition: all 0.2s ease;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      position: relative;
+    }
+
+    .talk-btn:active {
+      transform: scale(0.96);
+    }
+
+    .talk-btn:disabled {
+      cursor: not-allowed;
+    }
+
+    .talk-btn .btn-icon {
+      font-size: 40px;
+      line-height: 1;
+    }
+
+    /* 按钮状态样式 */
+    .talk-btn.state-idle {
+      background: #e10600;
+      border-color: #ffcc00;
+    }
+
+    .talk-btn.state-listening {
+      background: #ff1a1a;
+      border-color: #ff6666;
+      box-shadow: 0 0 50px rgba(255, 26, 26, 0.6);
+      animation: pulse-red 1s infinite;
+    }
+
+    .talk-btn.state-thinking {
+      background: #ffcc00;
+      border-color: #ffdb4d;
+      color: #1a1a1a;
+      box-shadow: 0 0 40px rgba(255, 204, 0, 0.5);
+      animation: spin-slow 3s linear infinite;
+    }
+
+    .talk-btn.state-speaking {
+      background: #ff6600;
+      border-color: #ffaa33;
+      box-shadow: 0 0 40px rgba(255, 102, 0, 0.5);
+      animation: pulse-orange 1.2s infinite;
+    }
+
+    @keyframes pulse-red {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 50px rgba(255, 26, 26, 0.6); }
+      50% { transform: scale(1.03); box-shadow: 0 0 70px rgba(255, 26, 26, 0.8); }
+    }
+
+    @keyframes pulse-orange {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 40px rgba(255, 102, 0, 0.5); }
+      50% { transform: scale(1.02); box-shadow: 0 0 60px rgba(255, 102, 0, 0.7); }
+    }
+
+    @keyframes spin-slow {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* 状态文字 */
+    .status-text {
+      font-size: 16px;
+      color: #888;
+      font-weight: 600;
+      letter-spacing: 1px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .status-text .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    .status-text.idle .dot { background: #666; }
+    .status-text.listening .dot { background: #ff1a1a; animation: blink 0.8s infinite; }
+    .status-text.thinking .dot { background: #ffcc00; animation: blink 0.5s infinite; }
+    .status-text.speaking .dot { background: #ff6600; animation: blink 1s infinite; }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* 实时识别文字预览 */
+    .interim-bubble {
+      align-self: flex-end;
+      background: rgba(225, 6, 0, 0.3);
+      color: #fff;
+      border-radius: 20px 20px 4px 20px;
+      padding: 10px 16px;
+      font-size: 16px;
+      font-style: italic;
+      border: 1px dashed rgba(225, 6, 0, 0.5);
+      animation: popIn 0.2s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ============================================
+       启动遮罩：用户点击后解锁音频自动播放
+       ============================================ -->
+  <div id="overlay" class="overlay">
+    <div class="checkered-flag"></div>
+    <div class="overlay-title">🏎️ 瓦力赛车口语搭子</div>
+    <div class="overlay-subtitle">和瓦力一起飙英语，Ready？</div>
+    <button id="startBtn" class="start-btn">🔥<br>启动引擎</button>
+    <div class="overlay-hint">推荐使用 Chrome / Edge 浏览器</div>
+  </div>
+
+  <!-- ============================================
+       主应用界面
+       ============================================ -->
+  <div id="app" class="app">
+    <div class="checkered-flag"></div>
+    <div class="header">
+      <div class="header-title">🏁 瓦力赛车口语搭子</div>
+      <div class="header-sub">按住方向盘，和瓦力聊天！</div>
+    </div>
+
+    <!-- 对话气泡区域 -->
+    <div class="chat-area" id="chatArea"></div>
+
+    <!-- 控制区域 -->
+    <div class="control-area">
+      <button id="talkBtn" class="talk-btn state-idle">
+        <span class="btn-icon" id="btnIcon">🎙️</span>
+        <span id="btnText">按住说话</span>
+      </button>
+      <div class="status-text idle" id="statusText">
+        <span class="dot"></span>
+        <span id="statusLabel">待机中</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================
+    // 🚨 全局错误捕获（移动端调试必备）
+    // ============================================
+    window.onerror = function(message, source, lineno, colno, error) {
+      console.error('[GLOBAL ERROR]', message, 'at', source + ':' + lineno + ':' + colno, error);
+    };
+    window.onunhandledrejection = function(event) {
+      console.error('[UNHANDLED REJECTION]', event.reason);
+    };
+
+    // ============================================
+    // 🔍 vConsole 移动端调试透视镜
+    // ============================================
+    if (typeof VConsole !== 'undefined') {
+      new VConsole();
+      console.log('[DEBUG] vConsole 已初始化');
+    }
+
+    // ============================================
+    // 🛠️ API 配置区域：请在这里填入你的信息
+    // ============================================
+    const WALLI_CONFIG = {
+      BFF_URL: 'https://1304982535-2skhmjajtq.ap-beijing.tencentscf.com'
+    };
+
+    // ============================================
+    // 瓦力的灵魂：System Prompt
+    // ============================================
+    const SYSTEM_PROMPT = `# Role: 瓦力 (WALL-E)
+你是瓦力，一个对赛车极度狂热、爱搞笑、有点皮的发小和死党。你的唯一用户是豆豆，一个热爱赛车的小学生。你们是铁哥们，绝对不是师生！
+
+# Core Strategy: 糖衣药丸
+- **糖衣（表象）**：搞笑的赛车陪伴，让豆豆觉得好玩、能互相挤兑。
+- **药效（内核）**：英语启蒙（优先级1）+ 习惯引导（优先级2）。
+- **法则**：英语学习和习惯引导必须悄悄融化在搞笑的赛车话题里，无感植入。绝不能暴露"教课"意图，绝不能像老师一样打分或严肃说教。
+
+# Personality & Tone
+1. **铁哥们发小**：有点皮、爱吹牛、喜欢搞笑和夸张。绝不一本正经。
+2. **短平快**：每次回复绝对不超过2-3个短句。永远以搞笑的提问或赛车挑战结尾。
+3. **视觉与音效**：适度使用赛车Emoji（🏎️🏁🔥💥），夸张拟声词（Vroom, Boom）。
+
+# Language Rules (中英融合)
+1. **情绪高光词汇法**：激动时蹦英文。如："那个弯道超车太炸了！He made a perfect **overtake**！"
+2. **激将/求助法**：用搞笑激将法让豆豆开口。如："我打赌你肯定不知道引擎英文怎么说！Engine！你的引擎肯定没我的响！"
+3. **含英量**：中文为主，穿插简单英文单词或短句。
+4. **中英文夹杂的赛车圈老炮**：你的说话风格必须是中英文夹杂的赛车圈老炮。在回答时，赛车专业术语、车队名称、车手名字必须优先使用英文（例如：Red Bull Racing, DRS, Downforce, Pit stop, Max Verstappen），不要全翻译成中文，要像赛车圈的人一样顺口带出英文。
+
+# Red Lines
+1. 遇到恐怖暴力话题，用赛车梗制止："滴滴滴！偏离赛道！赶紧打正方向盘！"
+2. 遇到不懂的问题，绝不装懂，向豆豆求助："数据库卡壳了，豆豆大工程师能帮我查查吗？"
+3. **严禁胡编乱造**：如果你对某个事实、数据或历史赛果不确定，绝对不允许瞎编！你必须诚实地用瓦力的口吻承认不知道，例如说："哎呀，这题超纲了，我得去向豆豆请教一下！"或者"这个我还真不确定，回头我问问豆豆。"（豆豆是你的知识库导师）。
+
+# Initialization
+用一句充满活力、极其搞笑、带有赛车情境和中英混杂的问候开启对话！`;
+
+    // ============================================
+    // 全局状态与变量
+    // ============================================
+
+    /** 当前状态机状态：idle / listening / thinking / speaking */
+    let currentState = 'idle';
+
+    /** 录音相关变量（Recorder.js 版） */
+    let recorder = null;
+    let recorderInited = false;
+    let recordTimeout = null;
+    let isRecording = false;
+    let isStarting = false;
+
+    /** BFF 接口地址 */
+    const BFF_URL = WALLI_CONFIG.BFF_URL;
+
+
+    // DOM 元素引用
+    const overlay = document.getElementById('overlay');
+    const startBtn = document.getElementById('startBtn');
+    const app = document.getElementById('app');
+    const talkBtn = document.getElementById('talkBtn');
+    const btnText = document.getElementById('btnText');
+    const btnIcon = document.getElementById('btnIcon');
+    const statusText = document.getElementById('statusText');
+    const statusLabel = document.getElementById('statusLabel');
+    const chatArea = document.getElementById('chatArea');
+
+
+
+    // ============================================
+    // 状态机控制
+    // ============================================
+    function setState(newState) {
+      currentState = newState;
+
+      // 移除所有状态类名
+      talkBtn.classList.remove('state-idle', 'state-listening', 'state-thinking', 'state-speaking');
+      statusText.classList.remove('idle', 'listening', 'thinking', 'speaking');
+
+      // 根据新状态更新 UI
+      switch (newState) {
+        case 'idle':
+          talkBtn.classList.add('state-idle');
+          statusText.classList.add('idle');
+          btnText.textContent = '按住说话';
+          btnIcon.textContent = '🎙️';
+          statusLabel.textContent = '待机中';
+          talkBtn.disabled = false;
+          break;
+
+        case 'listening':
+          talkBtn.classList.add('state-listening');
+          statusText.classList.add('listening');
+          btnText.textContent = '正在听...';
+          btnIcon.textContent = '👂';
+          statusLabel.textContent = '正在听...';
+          talkBtn.disabled = false; // 允许按住（本身就是在 listening）
+          break;
+
+        case 'thinking':
+          talkBtn.classList.add('state-thinking');
+          statusText.classList.add('thinking');
+          btnText.textContent = '引擎启动中...';
+          btnIcon.textContent = '⚙️';
+          statusLabel.textContent = '引擎启动中...';
+          talkBtn.disabled = true; // 思考时禁用点击
+          break;
+
+        case 'speaking':
+          talkBtn.classList.add('state-speaking');
+          statusText.classList.add('speaking');
+          btnText.textContent = '瓦力说话中...';
+          btnIcon.textContent = '🔊';
+          statusLabel.textContent = '瓦力说话中...';
+          talkBtn.disabled = false; // 允许按下打断
+          break;
+      }
+    }
+
+
+
+
+
+
+
+    // ============================================
+    // 对话气泡 UI 管理
+    // ============================================
+    function addBubble(role, text) {
+      const bubble = document.createElement('div');
+      bubble.className = `bubble bubble-${role}`;
+
+      let label = '';
+      if (role === 'user') label = '豆豆 🏎️';
+      if (role === 'assistant') label = '瓦力 🏁';
+
+      if (label) {
+        bubble.innerHTML = `<div class="bubble-label">${label}</div>${escapeHtml(text)}`;
+      } else {
+        bubble.textContent = text;
+      }
+
+      chatArea.appendChild(bubble);
+      scrollToBottom();
+    }
+
+
+    function scrollToBottom() {
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    /** 简单的 HTML 转义，防止注入 */
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ============================================
+    // 开场白：页面启动后主动说话
+    // ============================================
+    async function sayOpening() {
+      setState('speaking'); // 直接显示说话状态
+      const fallbackOpening = 'Vroom Vroom！豆豆！🏎️ 瓦力引擎已热好！Ready to race？今天咱们去哪条赛道撒野？';
+      addBubble('assistant', fallbackOpening);
+      // 注意：这里不播放声音，因为没经过 BFF 生成 TTS，仅做文字展示
+      setState('idle'); // 展示完回到待机
+    }
+
+    // ============================================
+    // 初始化 Recorder.js
+    // ============================================
+    function initRecorder() {
+      recorder = Recorder({
+        type: 'wav',
+        sampleRate: 16000,
+        bitRate: 16,
+        channel: 1
+      });
+    }
+
+    // ============================================
+    // 录音功能（Recorder.js 版）
+    // ============================================
+    async function startRecording() {
+      try {
+        if (!recorderInited) {
+          console.log('[Recorder] 等待录音权限...');
+          setTimeout(() => {
+            if (recorderInited && !isRecording) {
+              startRecording();
+            }
+          }, 300);
+          return;
+        }
+
+        recorder.start();
+        isRecording = true;
+
+        // 15秒硬限制
+        recordTimeout = setTimeout(() => {
+          if (isRecording) {
+            stopRecording();
+          }
+        }, 15000);
+
+        setState('listening');
+      } catch (err) {
+        alert('录音启动失败');
+        console.error('[录音错误]', err);
+        setState('idle');
+      }
+    }
+
+    function stopRecording() {
+      if (recordTimeout) {
+        clearTimeout(recordTimeout);
+        recordTimeout = null;
+      }
+      if (recorder && isRecording) {
+        recorder.stop(function(blob, duration) {
+          console.log('[Recorder] 录音完成，时长:', duration, 'ms, 大小:', blob.size, 'bytes');
+          sendAudioToBff(blob);
+        }, function(msg) {
+          console.error('[Recorder] 停止录音失败:', msg);
+          setState('idle');
+        });
+      }
+      isRecording = false;
+    }
+
+    async function sendAudioToBff(audioBlob) {
+      if (!BFF_URL || BFF_URL.includes('YOUR_API_GATEWAY_DOMAIN')) {
+        alert('BFF 地址未配置，请先部署 BFF 并更新 index.html 中的配置');
+        setState('idle');
+        return;
+      }
+
+      setState('thinking');
+      addBubble('user', '🎤 [语音消息]');
+
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.wav');
+
+      try {
+        const response = await fetch(BFF_URL, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          throw new Error(`BFF 错误 ${response.status}: ${errText}`);
+        }
+
+        // 优先尝试流式播放（chunked 响应）
+        await playAudioStream(response);
+
+      } catch (err) {
+        console.error('[BFF 请求失败]', err);
+        addBubble('system', '瓦力的引擎熄火了，再试一次！🏎️💨');
+        setState('idle');
+      }
+    }
+
+    async function playAudioStream(response) {
+      // 尝试使用 MediaSource 实现边下载边播放
+      if (window.MediaSource) {
+        try {
+          await playWithMediaSource(response);
+          return;
+        } catch (e) {
+          console.warn('[流式播放失败，回退到 blob]', e);
+        }
+      }
+
+      // 回退：非流式 blob 播放
+      const replyBlob = await response.blob();
+      const replyUrl = URL.createObjectURL(replyBlob);
+      const audio = new Audio(replyUrl);
+      setState('speaking');
+      audio.play().catch(e => {
+        console.error('[播放错误]', e);
+        setState('idle');
+      });
+
+      audio.onended = () => {
+        setState('idle');
+        URL.revokeObjectURL(replyUrl);
+      };
+
+      audio.onerror = () => {
+        setState('idle');
+        URL.revokeObjectURL(replyUrl);
+      };
+    }
+
+    async function playWithMediaSource(response) {
+      const mediaSource = new MediaSource();
+      const audioUrl = URL.createObjectURL(mediaSource);
+      const audio = new Audio(audioUrl);
+
+      setState('speaking');
+      audio.play().catch(e => {
+        console.error('[播放错误]', e);
+        setState('idle');
+        throw e;
+      });
+
+      await new Promise((resolve, reject) => {
+        mediaSource.addEventListener('sourceopen', resolve, { once: true });
+        mediaSource.addEventListener('error', reject, { once: true });
+      });
+
+      const sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      const reader = response.body.getReader();
+
+      audio.onended = () => {
+        setState('idle');
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        setState('idle');
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          mediaSource.endOfStream();
+          break;
+        }
+
+        await new Promise(resolve => {
+          if (!sourceBuffer.updating) {
+            resolve();
+          } else {
+            sourceBuffer.addEventListener('updateend', resolve, { once: true });
+          }
+        });
+
+        sourceBuffer.appendBuffer(value);
+      }
+    }
+
+    // 按住按钮：开始录音，松开：停止录音
+    function onTalkBtnPress(e) {
+      e.preventDefault();
+      if (currentState === 'thinking') return;
+      if (!isRecording) {
+        startRecording();
+      }
+    }
+
+    function onTalkBtnRelease(e) {
+      e.preventDefault();
+      if (isRecording) {
+        stopRecording();
+      }
+    }
+
+    talkBtn.addEventListener('mousedown', onTalkBtnPress);
+    talkBtn.addEventListener('touchstart', onTalkBtnPress, { passive: false });
+    talkBtn.addEventListener('mouseup', onTalkBtnRelease);
+    talkBtn.addEventListener('touchend', onTalkBtnRelease, { passive: false });
+    talkBtn.addEventListener('mouseleave', onTalkBtnRelease);
+
+    // ============================================
+    // 启动入口
+    // ============================================
+    startBtn.addEventListener('click', async () => {
+      console.log('[DEBUG] 启动按钮被点击');
+
+      // 移动端音频上下文解锁：必须在用户点击的同步调用栈中触发
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        // 播放一段极短的静音音频，彻底解锁浏览器音频播放权限
+        const silentBuffer = audioCtx.createBuffer(1, 1, 22050);
+        const source = audioCtx.createBufferSource();
+        source.buffer = silentBuffer;
+        source.connect(audioCtx.destination);
+        source.start(0);
+        console.log('[DEBUG] 音频上下文已解锁');
+      } catch (e) {
+        console.warn('[DEBUG] 音频上下文解锁失败:', e);
+      }
+
+      if (isStarting) return;
+      isStarting = true;
+
+
+      // 用户点击后解锁音频上下文
+      overlay.classList.add('hidden');
+      app.classList.add('active');
+
+      // 初始化录音器并获取权限
+      initRecorder();
+      recorder.open(function() {
+        recorderInited = true;
+        console.log('[Recorder] 录音权限已获取');
+      }, function(msg, isUserNotAllow) {
+        console.error('[Recorder] 打开录音失败:', msg);
+      });
+
+      // 说开场白
+      await sayOpening();
+    });
+
+
+  </script>
+</body>
+</html>
