@@ -3,8 +3,6 @@
 <head>
   <!-- 生产环境移除 vConsole，调试时手动添加 -->
   <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/recorder-core@1.3.25011100/src/recorder-core.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/recorder-core@1.3.25011100/src/engine/wav.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>瓦力赛车口语搭子 🏎️</title>
@@ -396,67 +394,29 @@
     };
 
     // ============================================
-    // 🔍 vConsole 移动端调试透视镜
-    // ============================================
-    if (typeof VConsole !== 'undefined') {
-      new VConsole();
-      console.log('[DEBUG] vConsole 已初始化');
-    }
-
-    // ============================================
-    // 🛠️ API 配置区域：请在这里填入你的信息
+    // 🛠️ API 配置区域
     // ============================================
     const WALLI_CONFIG = {
       BFF_URL: 'https://1304982535-2skhmjajtq.ap-beijing.tencentscf.com'
     };
 
     // ============================================
-    // 瓦力的灵魂：System Prompt
-    // ============================================
-    const SYSTEM_PROMPT = `# Role: 瓦力 (WALL-E)
-你是瓦力，一个对赛车极度狂热、爱搞笑、有点皮的发小和死党。你的唯一用户是豆豆，一个热爱赛车的小学生。你们是铁哥们，绝对不是师生！
-
-# Core Strategy: 糖衣药丸
-- **糖衣（表象）**：搞笑的赛车陪伴，让豆豆觉得好玩、能互相挤兑。
-- **药效（内核）**：英语启蒙（优先级1）+ 习惯引导（优先级2）。
-- **法则**：英语学习和习惯引导必须悄悄融化在搞笑的赛车话题里，无感植入。绝不能暴露"教课"意图，绝不能像老师一样打分或严肃说教。
-
-# Personality & Tone
-1. **铁哥们发小**：有点皮、爱吹牛、喜欢搞笑和夸张。绝不一本正经。
-2. **短平快**：每次回复绝对不超过2-3个短句。永远以搞笑的提问或赛车挑战结尾。
-3. **视觉与音效**：适度使用赛车Emoji（🏎️🏁🔥💥），夸张拟声词（Vroom, Boom）。
-
-# Language Rules (中英融合)
-1. **情绪高光词汇法**：激动时蹦英文。如："那个弯道超车太炸了！He made a perfect **overtake**！"
-2. **激将/求助法**：用搞笑激将法让豆豆开口。如："我打赌你肯定不知道引擎英文怎么说！Engine！你的引擎肯定没我的响！"
-3. **含英量**：中文为主，穿插简单英文单词或短句。
-4. **中英文夹杂的赛车圈老炮**：你的说话风格必须是中英文夹杂的赛车圈老炮。在回答时，赛车专业术语、车队名称、车手名字必须优先使用英文（例如：Red Bull Racing, DRS, Downforce, Pit stop, Max Verstappen），不要全翻译成中文，要像赛车圈的人一样顺口带出英文。
-
-# Red Lines
-1. 遇到恐怖暴力话题，用赛车梗制止："滴滴滴！偏离赛道！赶紧打正方向盘！"
-2. 遇到不懂的问题，绝不装懂，向豆豆求助："数据库卡壳了，豆豆大工程师能帮我查查吗？"
-3. **严禁胡编乱造**：如果你对某个事实、数据或历史赛果不确定，绝对不允许瞎编！你必须诚实地用瓦力的口吻承认不知道，例如说："哎呀，这题超纲了，我得去向豆豆请教一下！"或者"这个我还真不确定，回头我问问豆豆。"（豆豆是你的知识库导师）。
-
-# Initialization
-用一句充满活力、极其搞笑、带有赛车情境和中英混杂的问候开启对话！`;
-
-    // ============================================
     // 全局状态与变量
     // ============================================
-
     /** 当前状态机状态：idle / listening / thinking / speaking */
     let currentState = 'idle';
 
-    /** 录音相关变量（Recorder.js 版） */
-    let recorder = null;
-    let recorderInited = false;
-    let recordTimeout = null;
-    let isRecording = false;
-    let isStarting = false;
+    /** MediaRecorder 相关 */
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let recordTimer = null;
+    let recordWarningTimer = null;
+
+    /** 全局 Audio 实例（用于 TTS 播放） */
+    let globalAudio = new Audio();
 
     /** BFF 接口地址 */
     const BFF_URL = WALLI_CONFIG.BFF_URL;
-
 
     // DOM 元素引用
     const overlay = document.getElementById('overlay');
@@ -469,19 +429,13 @@
     const statusLabel = document.getElementById('statusLabel');
     const chatArea = document.getElementById('chatArea');
 
-
-
     // ============================================
     // 状态机控制
     // ============================================
     function setState(newState) {
       currentState = newState;
-
-      // 移除所有状态类名
       talkBtn.classList.remove('state-idle', 'state-listening', 'state-thinking', 'state-speaking');
       statusText.classList.remove('idle', 'listening', 'thinking', 'speaking');
-
-      // 根据新状态更新 UI
       switch (newState) {
         case 'idle':
           talkBtn.classList.add('state-idle');
@@ -491,41 +445,32 @@
           statusLabel.textContent = '待机中';
           talkBtn.disabled = false;
           break;
-
         case 'listening':
           talkBtn.classList.add('state-listening');
           statusText.classList.add('listening');
           btnText.textContent = '正在听...';
           btnIcon.textContent = '👂';
           statusLabel.textContent = '正在听...';
-          talkBtn.disabled = false; // 允许按住（本身就是在 listening）
+          talkBtn.disabled = false;
           break;
-
         case 'thinking':
           talkBtn.classList.add('state-thinking');
           statusText.classList.add('thinking');
           btnText.textContent = '引擎启动中...';
           btnIcon.textContent = '⚙️';
           statusLabel.textContent = '引擎启动中...';
-          talkBtn.disabled = true; // 思考时禁用点击
+          talkBtn.disabled = true;
           break;
-
         case 'speaking':
           talkBtn.classList.add('state-speaking');
           statusText.classList.add('speaking');
           btnText.textContent = '瓦力说话中...';
           btnIcon.textContent = '🔊';
           statusLabel.textContent = '瓦力说话中...';
-          talkBtn.disabled = false; // 允许按下打断
+          talkBtn.disabled = false;
           break;
       }
     }
-
-
-
-
-
-
 
     // ============================================
     // 对话气泡 UI 管理
@@ -533,27 +478,22 @@
     function addBubble(role, text) {
       const bubble = document.createElement('div');
       bubble.className = `bubble bubble-${role}`;
-
       let label = '';
       if (role === 'user') label = '豆豆 🏎️';
       if (role === 'assistant') label = '瓦力 🏁';
-
       if (label) {
         bubble.innerHTML = `<div class="bubble-label">${label}</div>${escapeHtml(text)}`;
       } else {
         bubble.textContent = text;
       }
-
       chatArea.appendChild(bubble);
       scrollToBottom();
     }
-
 
     function scrollToBottom() {
       chatArea.scrollTop = chatArea.scrollHeight;
     }
 
-    /** 简单的 HTML 转义，防止注入 */
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
@@ -561,205 +501,192 @@
     }
 
     // ============================================
-    // 开场白：页面启动后主动说话
+    // 开场白
     // ============================================
     async function sayOpening() {
-      setState('speaking'); // 直接显示说话状态
+      setState('speaking');
       const fallbackOpening = 'Vroom Vroom！豆豆！🏎️ 瓦力引擎已热好！Ready to race？今天咱们去哪条赛道撒野？';
       addBubble('assistant', fallbackOpening);
-      // 注意：这里不播放声音，因为没经过 BFF 生成 TTS，仅做文字展示
-      setState('idle'); // 展示完回到待机
+      setState('idle');
     }
 
     // ============================================
-    // 初始化 Recorder.js
-    // ============================================
-    function initRecorder() {
-      recorder = Recorder({
-        type: 'wav',
-        sampleRate: 16000,
-        bitRate: 16,
-        channel: 1
-      });
-    }
-
-    // ============================================
-    // 录音功能（Recorder.js 版）
+    // 录音功能：getUserMedia + MediaRecorder (WebM/Opus)
     // ============================================
     async function startRecording() {
       try {
-        if (!recorderInited) {
-          console.log('[Recorder] 等待录音权限...');
-          setTimeout(() => {
-            if (recorderInited && !isRecording) {
-              startRecording();
-            }
-          }, 300);
-          return;
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4');
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        recordedChunks = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: mimeType });
+          handleRecordingComplete(blob);
+          stream.getTracks().forEach(t => t.stop());
+        };
+        mediaRecorder.onerror = (e) => {
+          console.error('[MediaRecorder] 错误:', e);
+          resetToIdle();
+          alert('录音出错，请重试');
+        };
+        mediaRecorder.start(100);
+        setState('listening');
 
-        recorder.start();
-        isRecording = true;
+        // 10秒视觉预警
+        recordWarningTimer = setTimeout(() => {
+          if (currentState === 'listening') {
+            btnText.textContent = '还剩5秒...';
+          }
+        }, 10000);
 
-        // 15秒硬限制
-        recordTimeout = setTimeout(() => {
-          if (isRecording) {
+        // 15秒硬上限自动 stop
+        recordTimer = setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state === 'recording') {
             stopRecording();
           }
         }, 15000);
-
-        setState('listening');
       } catch (err) {
-        alert('录音启动失败');
-        console.error('[录音错误]', err);
-        setState('idle');
+        console.error('[录音启动失败]', err);
+        alert('录音启动失败：' + (err.name === 'NotAllowedError' ? '请允许麦克风权限' : err.message));
+        resetToIdle();
       }
     }
 
     function stopRecording() {
-      if (recordTimeout) {
-        clearTimeout(recordTimeout);
-        recordTimeout = null;
+      if (recordTimer) { clearTimeout(recordTimer); recordTimer = null; }
+      if (recordWarningTimer) { clearTimeout(recordWarningTimer); recordWarningTimer = null; }
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
       }
-      if (recorder && isRecording) {
-        recorder.stop(function(blob, duration) {
-          console.log('[Recorder] 录音完成，时长:', duration, 'ms, 大小:', blob.size, 'bytes');
-          sendAudioToBff(blob);
-        }, function(msg) {
-          console.error('[Recorder] 停止录音失败:', msg);
-          setState('idle');
-        });
-      }
-      isRecording = false;
     }
 
-    async function sendAudioToBff(audioBlob) {
+    // ============================================
+    // 录音完成后处理：/api/chat(format=json) → /api/tts → 全局 Audio 播放
+    // ============================================
+    async function handleRecordingComplete(audioBlob) {
       if (!BFF_URL || BFF_URL.includes('YOUR_API_GATEWAY_DOMAIN')) {
-        alert('BFF 地址未配置，请先部署 BFF 并更新 index.html 中的配置');
-        setState('idle');
+        alert('BFF 地址未配置');
+        resetToIdle();
         return;
       }
-
       setState('thinking');
       addBubble('user', '🎤 [语音消息]');
 
-      const formData = new FormData();
-      formData.append('audio', audioBlob, 'recording.wav');
-
       try {
-        const response = await fetch(BFF_URL, {
+        // 1. POST /api/chat?format=json 获取 ASR + LLM 回复文本
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
+        formData.append('format', 'json');
+
+        const chatRes = await fetch(BFF_URL + '/api/chat', {
           method: 'POST',
           body: formData,
         });
+        if (!chatRes.ok) {
+          const errText = await chatRes.text().catch(() => '');
+          throw new Error(`BFF /api/chat 错误 ${chatRes.status}: ${errText}`);
+        }
+        const chatData = await chatRes.json();
+        if (chatData.status !== 'ok') {
+          throw new Error(chatData.message || '聊天接口返回错误');
+        }
+        const replyText = chatData.replyText;
+        addBubble('assistant', replyText);
 
-        if (!response.ok) {
-          const errText = await response.text().catch(() => '');
-          throw new Error(`BFF 错误 ${response.status}: ${errText}`);
+        // 2. POST /api/tts 获取音频
+        const ttsRes = await fetch(BFF_URL + '/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: replyText }),
+        });
+        if (!ttsRes.ok) {
+          const errText = await ttsRes.text().catch(() => '');
+          throw new Error(`BFF /api/tts 错误 ${ttsRes.status}: ${errText}`);
         }
 
-        // 优先尝试流式播放（chunked 响应）
-        await playAudioStream(response);
+        // 3. 全局 Audio 实例边下边播
+        const ttsBlob = await ttsRes.blob();
+        const ttsUrl = URL.createObjectURL(ttsBlob);
+        globalAudio.src = ttsUrl;
+        setState('speaking');
 
+        globalAudio.onended = () => {
+          setState('idle');
+          URL.revokeObjectURL(ttsUrl);
+        };
+        globalAudio.onerror = (e) => {
+          console.error('[Audio 播放错误]', e);
+          setState('idle');
+          URL.revokeObjectURL(ttsUrl);
+        };
+
+        await globalAudio.play();
       } catch (err) {
-        console.error('[BFF 请求失败]', err);
+        console.error('[处理失败]', err);
         addBubble('system', '瓦力的引擎熄火了，再试一次！🏎️💨');
         setState('idle');
       }
     }
 
-    async function playAudioStream(response) {
-      // 尝试使用 MediaSource 实现边下载边播放
-      if (window.MediaSource) {
-        try {
-          await playWithMediaSource(response);
-          return;
-        } catch (e) {
-          console.warn('[流式播放失败，回退到 blob]', e);
-        }
-      }
-
-      // 回退：非流式 blob 播放
-      const replyBlob = await response.blob();
-      const replyUrl = URL.createObjectURL(replyBlob);
-      const audio = new Audio(replyUrl);
-      setState('speaking');
-      audio.play().catch(e => {
-        console.error('[播放错误]', e);
-        setState('idle');
-      });
-
-      audio.onended = () => {
-        setState('idle');
-        URL.revokeObjectURL(replyUrl);
-      };
-
-      audio.onerror = () => {
-        setState('idle');
-        URL.revokeObjectURL(replyUrl);
-      };
+    // ============================================
+    // 打断与 Reset
+    // ============================================
+    function interruptSpeaking() {
+      globalAudio.pause();
+      globalAudio.currentTime = 0;
+      setState('idle');
     }
 
-    async function playWithMediaSource(response) {
-      const mediaSource = new MediaSource();
-      const audioUrl = URL.createObjectURL(mediaSource);
-      const audio = new Audio(audioUrl);
-
-      setState('speaking');
-      audio.play().catch(e => {
-        console.error('[播放错误]', e);
-        setState('idle');
-        throw e;
-      });
-
-      await new Promise((resolve, reject) => {
-        mediaSource.addEventListener('sourceopen', resolve, { once: true });
-        mediaSource.addEventListener('error', reject, { once: true });
-      });
-
-      const sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
-      const reader = response.body.getReader();
-
-      audio.onended = () => {
-        setState('idle');
-        URL.revokeObjectURL(audioUrl);
-      };
-
-      audio.onerror = () => {
-        setState('idle');
-        URL.revokeObjectURL(audioUrl);
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          mediaSource.endOfStream();
-          break;
-        }
-
-        await new Promise(resolve => {
-          if (!sourceBuffer.updating) {
-            resolve();
-          } else {
-            sourceBuffer.addEventListener('updateend', resolve, { once: true });
-          }
-        });
-
-        sourceBuffer.appendBuffer(value);
+    function resetToIdle() {
+      if (recordTimer) { clearTimeout(recordTimer); recordTimer = null; }
+      if (recordWarningTimer) { clearTimeout(recordWarningTimer); recordWarningTimer = null; }
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        try { mediaRecorder.stop(); } catch (e) {}
       }
+      globalAudio.pause();
+      globalAudio.currentTime = 0;
+      setState('idle');
     }
 
-    // 按住按钮：开始录音，松开：停止录音
+    // ============================================
+    // 按钮事件：0ms 视觉欺骗 + 打断 + 录音
+    // ============================================
     function onTalkBtnPress(e) {
       e.preventDefault();
+      // 0ms 视觉欺骗：touchstart 瞬间改变样式，不等 getUserMedia 回调
+      if (currentState === 'idle') {
+        talkBtn.classList.remove('state-idle');
+        talkBtn.classList.add('state-listening');
+        statusText.classList.remove('idle');
+        statusText.classList.add('listening');
+        btnText.textContent = '正在听...';
+        btnIcon.textContent = '👂';
+        statusLabel.textContent = '正在听...';
+      }
+
       if (currentState === 'thinking') return;
-      if (!isRecording) {
+
+      if (currentState === 'speaking') {
+        // 打断妥协：仅 pause + currentTime=0，松手后回 idle
+        globalAudio.pause();
+        globalAudio.currentTime = 0;
+        setState('idle');
+        return;
+      }
+
+      if (currentState === 'idle') {
         startRecording();
       }
     }
 
     function onTalkBtnRelease(e) {
       e.preventDefault();
-      if (isRecording) {
+      if (currentState === 'listening') {
         stopRecording();
       }
     }
@@ -771,19 +698,34 @@
     talkBtn.addEventListener('mouseleave', onTalkBtnRelease);
 
     // ============================================
+    // 异常防御：权限拒绝 / 后台切换自动 Reset
+    // ============================================
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && currentState !== 'idle') {
+        console.log('[visibilitychange] 页面切换到后台，自动重置');
+        resetToIdle();
+      }
+    });
+
+    window.addEventListener('offline', () => {
+      if (currentState !== 'idle') {
+        console.log('[offline] 网络断开，自动重置');
+        resetToIdle();
+        alert('网络已断开，请检查网络后重试');
+      }
+    });
+
+    // ============================================
     // 启动入口
     // ============================================
     startBtn.addEventListener('click', async () => {
       console.log('[DEBUG] 启动按钮被点击');
-
-      // 移动端音频上下文解锁：必须在用户点击的同步调用栈中触发
       try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const audioCtx = new AudioContext();
         if (audioCtx.state === 'suspended') {
-          audioCtx.resume();
+          await audioCtx.resume();
         }
-        // 播放一段极短的静音音频，彻底解锁浏览器音频播放权限
         const silentBuffer = audioCtx.createBuffer(1, 1, 22050);
         const source = audioCtx.createBufferSource();
         source.buffer = silentBuffer;
@@ -794,28 +736,10 @@
         console.warn('[DEBUG] 音频上下文解锁失败:', e);
       }
 
-      if (isStarting) return;
-      isStarting = true;
-
-
-      // 用户点击后解锁音频上下文
       overlay.classList.add('hidden');
       app.classList.add('active');
-
-      // 初始化录音器并获取权限
-      initRecorder();
-      recorder.open(function() {
-        recorderInited = true;
-        console.log('[Recorder] 录音权限已获取');
-      }, function(msg, isUserNotAllow) {
-        console.error('[Recorder] 打开录音失败:', msg);
-      });
-
-      // 说开场白
       await sayOpening();
     });
-
-
   </script>
 </body>
 </html>
